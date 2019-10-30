@@ -1,12 +1,11 @@
 ﻿using CsvHelper.Configuration;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System;
-using System.Reflection;
+using Tailwind.Traders.Product.Api.HealthCheck;
 using Tailwind.Traders.Product.Api.Infrastructure;
 using Tailwind.Traders.Product.Api.Mappers;
 
@@ -18,13 +17,9 @@ namespace Tailwind.Traders.Product.Api.Extensions
         {
             service.AddDbContext<ProductContext>(options =>
             {
-                options.UseSqlServer(configuration["ConnectionString"], sqlOptions =>
-                {
-                    sqlOptions.MigrationsAssembly(typeof(Startup).GetTypeInfo().Assembly.GetName().Name);
-                    sqlOptions.EnableRetryOnFailure(maxRetryCount: 10, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null);
-                })
+                options.UseCosmos(configuration["CosmosDb:Host"], configuration["CosmosDb:Key"], configuration["CosmosDb:Database"])
                 .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-            });
+                });
 
             return service;
         }
@@ -39,9 +34,7 @@ namespace Tailwind.Traders.Product.Api.Extensions
                 .AddTransient<ClassMap, ProductTypeMap>()
                 .AddTransient<ClassMap, ProductTagMap>()
                 .AddTransient<MapperDtos>()
-                .AddSingleton<IHttpContextAccessor, HttpContextAccessor>()
-                .AddHttpClient(configuration["ProductVisitsUrl"])
-                .SetHandlerLifetime(TimeSpan.FromMinutes(5));
+                .AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
             service.Configure<AppSettings>(configuration);
 
@@ -54,12 +47,15 @@ namespace Tailwind.Traders.Product.Api.Extensions
 
             hcBuilder.AddCheck("self", () => HealthCheckResult.Healthy());
 
-            hcBuilder
-                .AddSqlServer(
-                    configuration["ConnectionString"],
-                    name: "ProductsDB-check",
-                    tags: new string[] { "productdb" });
-            
+            hcBuilder.Add(new HealthCheckRegistration(
+                "ProductsDB-check",
+                sp => new CosmosDbHealthCheck(
+                    $"AccountEndpoint={configuration["CosmosDb:Host"]};AccountKey={configuration["CosmosDb:Key"]}",
+                    configuration["CosmosDb:Database"]),
+                HealthStatus.Unhealthy,
+                new string[] { "productdb" }
+            ));
+
             return services;
         }
     }
